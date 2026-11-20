@@ -6,7 +6,8 @@ const EMOTIONS = ['Спокойствие','Радость','Интерес','Г
 const NEEDS = ['Вкуса','Энергии','Отдыха','Удовольствия','Переключения','Отключиться от мыслей','Интересных впечатлений','Времени для себя','Приятного общения','Физически голодна'];
 const BUILTIN = [
  {id:'craving',title:'Что стоит за желанием сладкого?',subtitle:'Четыре шкалы и наблюдение за потребностями',icon:'🍫',duration:'2–3 мин'},
- {id:'mindful',title:'Сладкое без автоматизма',subtitle:'Три вопроса до еды и наблюдение за удовольствием',icon:'🌿',duration:'2 мин + наблюдение'}
+ {id:'mindful',title:'Сладкое без автоматизма',subtitle:'Три вопроса до еды и наблюдение за удовольствием',icon:'🌿',duration:'2 мин + наблюдение'},
+ {id:'nextbite',title:'Пауза между кусочками',subtitle:'Заметить, что происходит с тягой, когда удовольствие слабеет',icon:'⏳',duration:'Около минуты'}
 ];
 const initial = () => ({version:1,createdAt:new Date().toISOString(),settings:{times:DEFAULT_TIMES.slice(),checkinsPerDay:6},records:[],tasks:[]});
 function loadData(){
@@ -16,7 +17,7 @@ function loadData(){
  obj.settings.times=normalizeTimes(obj.settings.times,obj.settings.checkinsPerDay);
  return obj;}catch(e){return initial();}
 }
-let db=loadData();let page='home';let practiceId=null;let editTask=false;let selectedEmotions=[];let selectedNeeds=[];let toastTimer=null;let dismissedReminder='';
+let db=loadData();let page='home';let practiceId=null;let editTask=false;let selectedEmotions=[];let selectedNeeds=[];let toastTimer=null;let dismissedReminder='';let biteTimerInterval=null;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(db));return true;}catch(e){alert('Не получилось сохранить данные. Проверьте свободное место в браузере и экспортируйте дневник.');return false;}}
 const el=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -37,7 +38,7 @@ const readyTimes=()=>db.settings.times.slice(0,db.settings.checkinsPerDay);
 function normalizeTimes(times,count){const output=[];for(let i=0;i<count;i++){let s=times[i];if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(s||''))s=DEFAULT_TIMES[i];output.push(s)}return output.sort();}
 function notify(msg){const t=el('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3300);}
 function navigate(next,id=null){page=next;practiceId=id;editTask=false;selectedEmotions=[];selectedNeeds=[];render();window.scrollTo({top:0,behavior:'instant'});}
-function iconForRecord(r){return r.type==='checkin'?'◉':r.type==='craving'?'🍫':r.type==='mindful'?'🌿':'✎'}
+function iconForRecord(r){return r.type==='checkin'?'◉':r.type==='craving'?'🍫':r.type==='mindful'?'🌿':r.type==='nextbite'?'⏳':'✎'}
 function inputRange(id,label,def=5,left='Совсем нет',right='Очень сильно'){
  return `<div class="form-field"><div class="scale-row"><label for="${esc(id)}" class="field-label">${esc(label)}</label><output class="score" for="${esc(id)}" id="${esc(id)}-out">${def}</output></div><input type="range" id="${esc(id)}" min="0" max="10" value="${def}" step="1" aria-label="${esc(label)}"><div class="scale-ends"><span>${esc(left)}</span><span>${esc(right)}</span></div></div>`;
 }
@@ -53,6 +54,7 @@ function historyRow(r){let title,desc;
  if(r.type==='checkin') {title='Отметка состояния';desc=`Настроение ${r.mood}/10 · Энергия ${r.energy}/10 · Напряжение ${r.stress}/10${r.emotions?.length?' · '+r.emotions.join(', '):''}`;}
  else if(r.type==='craving'){title='Желание сладкого · 4 шкалы';desc=`Тяга ${r.urge}/10${r.needs?.length?' · '+r.needs.join(', '):''}`;}
  else if(r.type==='mindful'){title='Сладкое без автоматизма';desc=r.completedAt?'Наблюдение завершено':'Первая часть сохранена · можно продолжить';}
+ else if(r.type==='nextbite'){title='Пауза между кусочками';desc=r.stoppedEarly?'Упражнение прекращено':r.completedAt?`Тяга ${r.urgeBefore}/10 → ${r.urgeAfter}/10${r.decision?' · '+r.decision:''}`:'Начало сохранено · можно продолжить';}
  else {title=r.taskName||'Задание психолога';desc=`Ответов: ${r.responses?.length||0}`;}
  return `<div class="activity"><div class="activity-icon" aria-hidden="true">${iconForRecord(r)}</div><div class="activity-main"><strong>${esc(title)}</strong><p>${esc(desc)}</p>${r.note?`<p>${esc(r.note).slice(0,180)}</p>`:''}</div><time>${fmtTime(r.at)}</time></div>`;
 }
@@ -67,6 +69,7 @@ function homeView(){
  <div class="section-title"><h2>Практики</h2><button class="btn outline small" data-go="practice">Все задания</button></div>
  <div class="card"><div class="card-head"><div><div class="eyebrow">Наблюдение</div><h3>Что стоит за желанием сладкого?</h3></div><span class="chip">2–3 мин</span></div><p>Четыре шкалы: впечатления, время для себя, общение и сила желания сладкого.</p><button class="btn secondary" data-practice="craving">Открыть задание</button></div>
  <div class="card"><div class="card-head"><div><div class="eyebrow">Осознанность</div><h3>Сладкое без автоматизма</h3></div><span class="chip">Без запретов</span></div><p>Что хочется получить? Что ощущаю? Когда удовольствие меняется?</p><button class="btn secondary" data-practice="mindful">Открыть задание</button></div>
+ <div class="card"><div class="card-head"><div><div class="eyebrow">Наблюдение во время еды</div><h3>Пауза между кусочками</h3></div><span class="chip">≈ 1 мин</span></div><p>Когда удовольствие снижается, а желание продолжать остаётся: оцени тягу, понаблюдай за ней минуту и сама реши, есть дальше или нет.</p><button class="btn secondary" data-practice="nextbite">Открыть задание</button></div>
  <div class="section-title"><h2>Последняя запись</h2><button class="btn outline small" data-go="history">История</button></div>
  <div class="card">${last?historyRow(last):`<div class="empty"><span class="emoji" aria-hidden="true">✧</span><h3>Здесь появится твоя первая запись</h3><p>Не нужно ничего заполнять задним числом.</p></div>`}</div>`;
 }
@@ -82,10 +85,11 @@ function checkinView(){return `${header('Короткая отметка','От�
  <button class="btn full" type="submit">Сохранить отметку</button>
  <p class="small-copy" style="margin-top:15px">Пропущенные проверки не считаются неудачей. Ты можешь записывать состояние в любое время.</p>
  </form>`;}
-function practiceView(){const pending=logs().filter(r=>r.type==='mindful'&&!r.completedAt);
+function practiceView(){const pending=logs().filter(r=>r.type==='mindful'&&!r.completedAt);const pendingBite=logs().filter(r=>r.type==='nextbite'&&!r.completedAt);
  return `${header('Практики психолога','Небольшие упражнения для наблюдения за собой — без контроля еды, оценок и обязательств.','Работа в своём темпе')}
  ${BUILTIN.map(t=>`<div class="card"><div class="card-head"><div><div class="eyebrow">${t.icon} · ${t.duration}</div><h2>${esc(t.title)}</h2></div></div><p>${esc(t.subtitle)}</p><button class="btn secondary" data-practice="${t.id}">Начать</button></div>`).join('')}
  ${pending.length?`<div class="card mint"><div class="eyebrow">Незавершённое наблюдение</div><h3>Можно вернуться к записи</h3><p>Продолжай только если это ещё актуально. Можно также оставить её как есть.</p><button class="btn" data-finish-mindful="${esc(pending[0].id)}">Продолжить</button></div>`:''}
+ ${pendingBite.length?`<div class="card mint"><div class="eyebrow">Незавершённое упражнение</div><h3>Пауза между кусочками</h3><p>Можно дополнить запись, если это ещё актуально, или оставить незавершённой.</p><button class="btn" data-finish-bite="${esc(pendingBite[0].id)}">Продолжить</button></div>`:''}
  <div class="section-title"><h2>Мои задания</h2><button class="btn outline small" id="add-task">+ Добавить</button></div>
  ${db.tasks.length?db.tasks.map(t=>`<div class="card"><div class="split"><div><h3>${esc(t.name)}</h3><p>${esc(t.description||'Пользовательское задание')}</p><span class="small-copy muted">Вопросов: ${t.questions.length}</span></div><button class="btn outline small" data-delete-task="${esc(t.id)}" aria-label="Удалить задание ${esc(t.name)}">×</button></div><div class="btn-row"><button class="btn secondary" data-practice="${esc(t.id)}">Открыть</button></div></div>`).join(''):`<div class="card"><p>Добавь задания, которые предлагает психолог. Для каждого можно указать вопросы и тип ответа.</p><button class="btn secondary" id="add-task-empty">Добавить своё задание</button></div>`}
  `;}
@@ -118,6 +122,38 @@ function finishMindfulView(id){const r=db.records.find(x=>x.id===id&&x.type==='m
  <div class="form-field"><label class="field-label" for="mindful-after-note">Что происходило дальше?</label>${textArea('mindful-after-note','Что изменилось в чувствах, ощущениях, мыслях?')}</div>
  <button class="btn full" type="submit">Завершить наблюдение</button>
  </form>`;}
+function nextBiteView(){return `${header('Пауза между кусочками','Попробуй заметить момент, когда удовольствие от сладкого начинает снижаться, но желание продолжить остаётся. Не нужно специально ждать или добиваться такого момента.','Практика · во время еды')}
+ <form id="nextbite-form" class="card">
+ <p>Если такой момент появился, остановись на короткое наблюдение. Если нет — упражнение можно пропустить.</p>
+ ${inputRange('bite-urge-before','1. Насколько сильна тяга сейчас?',5)}
+ <div class="form-field"><label class="field-label" for="bite-next-wish">2. Чего я сейчас хочу от следующего кусочка?</label>${textArea('bite-next-wish','Например: вкуса, удовольствия, успокоения, отключиться от мыслей…')}</div>
+ <div class="callout">3. Сделай паузу примерно на минуту и понаблюдай, меняется ли тяга. Можно завершить паузу раньше, если она вызывает напряжение. После этого ты сама решаешь, продолжать есть или нет — оба варианта допустимы.</div>
+ <button class="btn full" type="submit">Начать минутную паузу</button>
+ </form>`;}
+function finishNextBiteView(id){const r=db.records.find(x=>x.id===id&&x.type==='nextbite');if(!r)return practiceView();
+ const elapsed=r.pauseEndedAt?Math.max(0,Math.round((new Date(r.pauseEndedAt)-new Date(r.pauseStartedAt))/1000)):Math.max(0,Math.floor((Date.now()-new Date(r.pauseStartedAt))/1000));
+ return `${header('Наблюдаем за тягой','В течение приблизительно минуты просто замечай ощущения и мысли. Не нужно пытаться подавлять желание.','Практика · минута паузы')}
+ <div class="card mint"><div class="eyebrow">Пауза</div><h2 id="bite-countdown" role="timer" aria-live="off">${r.pauseEndedAt?'Пауза завершена':elapsed>=60?'Прошла примерно минута':`Осталось ${Math.floor((60-elapsed)/60)}:${pad((60-elapsed)%60)}`}</h2><p>Тяга до паузы: <strong>${r.urgeBefore}/10</strong>${r.nextBiteWish?`<span class="field-note">Чего хотелось от следующего кусочка: ${esc(r.nextBiteWish)}</span>`:''}</p>
+ <p class="small-copy">Можно спокойно наблюдать за тягой. Если эксперимент вызывает сильное напряжение, его можно прекратить.</p>
+ ${!r.pauseEndedAt&&elapsed<60?`<button type="button" class="btn outline small" id="stop-bite-pause" data-record-id="${esc(id)}">Завершить паузу раньше</button>`:''}</div>
+ <form id="nextbite-finish-form" data-record-id="${esc(id)}" class="card">
+ ${inputRange('bite-urge-after','4. Сила тяги после паузы',r.urgeBefore)}
+ <div class="form-field"><label class="field-label" for="bite-after-note">Что изменилось за время паузы?</label>${textArea('bite-after-note','Тяга усилилась, уменьшилась, осталась прежней? Какие мысли и ощущения ты заметила?')}</div>
+ <div class="form-field"><label class="field-label" for="bite-decision">5. Что ты решила после паузы?</label><select id="bite-decision"><option value="">Пока не решила / не хочу отмечать</option><option>Продолжить есть</option><option>Не продолжать сейчас</option></select></div>
+ <div class="callout">Оба решения одинаково допустимы. Это не тренировка силы воли и не способ заставить себя съесть меньше — мы исследуем, что происходит с желанием.</div>
+ <button class="btn full" type="submit">Сохранить наблюдение</button>
+ <button class="btn outline full" style="margin-top:10px" type="button" id="abandon-bite-practice" data-record-id="${esc(id)}">Прекратить упражнение без оценки</button>
+ </form>`;}
+function startBiteTimer(){if(biteTimerInterval){clearInterval(biteTimerInterval);biteTimerInterval=null;}
+ const out=el('bite-countdown');if(!out)return;
+ const r=db.records.find(x=>x.id===el('nextbite-finish-form')?.dataset.recordId);
+ if(!r||r.pauseEndedAt)return;
+ const update=()=>{if(!out.isConnected){clearInterval(biteTimerInterval);biteTimerInterval=null;return;}
+ const elapsed=Math.max(0,Math.floor((Date.now()-new Date(r.pauseStartedAt))/1000));const remain=Math.max(0,60-elapsed);
+ out.textContent=remain?`Осталось ${Math.floor(remain/60)}:${pad(remain%60)}`:'Прошла примерно минута';
+ if(!remain){el('stop-bite-pause')?.remove();clearInterval(biteTimerInterval);biteTimerInterval=null;}};
+ update();if(!r.pauseEndedAt&&Date.now()-new Date(r.pauseStartedAt).getTime()<60000)biteTimerInterval=setInterval(update,1000);
+}
 function taskEditorView(){return `${header('Новое задание','Добавь упражнение психолога. Вопросы будут появляться в отдельной анкете.','Настройка практики')}
 <form id="task-form" class="card"><div class="form-field"><label for="task-name" class="field-label">Название задания</label><input type="text" id="task-name" maxlength="100" placeholder="Например, проверка автоматических мыслей" required></div>
 <div class="form-field"><label for="task-description" class="field-label">Короткое описание</label>${textArea('task-description','Когда выполнять и для чего',2)}</div>
@@ -148,17 +184,18 @@ function historyView(){const rec=logs();const days=new Map();rec.slice(0,80).for
  <div class="card"><h2>Последние 7 дней</h2><p class="small-copy">Средние значения только по заполненным отметкам. Отсутствие записей не приравнивается к нулю.</p>${simpleStats()}${chartSvg()}</div>
  <div class="card mint"><div class="eyebrow">Гипотеза, не диагноз</div><h3>Желание сладкого и потребности</h3><p>${esc(observePattern())}</p></div>
  <div class="section-title"><h2>Все записи</h2><span class="section-counter">${rec.length}</span></div>
- ${rec.length?Array.from(days,([date,rs])=>`<div class="card"><h3 class="day-label">${esc(prettyDate(new Date(date+'T12:00:00')))}</h3>${rs.map(r=>`<div>${historyRow(r)}<div class="btn-row" style="margin:0 0 9px 48px">${r.type==='mindful'&&!r.completedAt?`<button class="btn small secondary" data-finish-mindful="${esc(r.id)}">Продолжить</button>`:''}<button class="btn outline small" data-detail="${esc(r.id)}">Подробнее</button></div></div>`).join('')}</div>`).join(''):`<div class="card empty"><span class="emoji">✧</span><h3>Записей пока нет</h3><p>Начни с первой короткой отметки — этого достаточно.</p><button class="btn" data-go="checkin">Отметить состояние</button></div>`}
+ ${rec.length?Array.from(days,([date,rs])=>`<div class="card"><h3 class="day-label">${esc(prettyDate(new Date(date+'T12:00:00')))}</h3>${rs.map(r=>`<div>${historyRow(r)}<div class="btn-row" style="margin:0 0 9px 48px">${r.type==='mindful'&&!r.completedAt?`<button class="btn small secondary" data-finish-mindful="${esc(r.id)}">Продолжить</button>`:''}${r.type==='nextbite'&&!r.completedAt?`<button class="btn small secondary" data-finish-bite="${esc(r.id)}">Продолжить</button>`:''}<button class="btn outline small" data-detail="${esc(r.id)}">Подробнее</button></div></div>`).join('')}</div>`).join(''):`<div class="card empty"><span class="emoji">✧</span><h3>Записей пока нет</h3><p>Начни с первой короткой отметки — этого достаточно.</p><button class="btn" data-go="checkin">Отметить состояние</button></div>`}
  ${rec.length>80?'<p class="small-copy">Показаны последние 80 записей. Полный архив доступен в резервной копии JSON.</p>':''}`;
 }
 function detailsView(id){const r=db.records.find(x=>x.id===id);if(!r)return historyView();let lines=[];
  if(r.type==='checkin')lines=[['Настроение',r.mood+'/10'],['Энергия',r.energy+'/10'],['Напряжение',r.stress+'/10'],['Самочувствие',r.body+'/10'],['Эмоции',r.emotions?.join(', ')||'—'],['Тяга к сладкому',r.sweetUrge===null?'—':r.sweetUrge+'/10'],['Заметка',r.note||'—']];
  if(r.type==='craving')lines=[['Нехватка впечатлений',r.impressions+'/10'],['Нехватка времени для себя',r.time+'/10'],['Нехватка общения',r.communication+'/10'],['Тяга',r.urge+'/10'],['Что хотелось',r.needs?.join(', ')||'—'],['Заметка',r.note||'—']];
  if(r.type==='mindful')lines=[['Чего хотелось',r.needs?.join(', ')||'—'],['Чувства до',r.feelings||'—'],['Ожидания',r.expectation||'—'],['Изменение удовольствия',r.pleasureShift||'—'],['Тяга после',r.urgeAfter===undefined?'—':r.urgeAfter+'/10'],['Наблюдения после',r.afterNote||'—']];
+ if(r.type==='nextbite')lines=[['Сила тяги до паузы',r.urgeBefore+'/10'],['Чего хотелось от следующего кусочка',r.nextBiteWish||'—'],['Длительность наблюдения',r.pauseSeconds===undefined?'—':r.pauseSeconds+' сек.'],['Сила тяги после',r.urgeAfter===undefined?'—':r.urgeAfter+'/10'],['Что произошло с тягой',r.afterNote||'—'],['Решение',r.decision||'—'],['Статус',r.stoppedEarly?'Упражнение прекращено':r.completedAt?'Наблюдение завершено':'Не завершено']];
  if(r.type==='custom')lines=(r.responses||[]).map(q=>[q.label,q.value||'—']);
  return `${header('Запись','Сохранено '+new Intl.DateTimeFormat('ru-RU',{dateStyle:'long',timeStyle:'short'}).format(new Date(r.at)),'Подробнее')}
  <div class="card">${lines.map(([k,v])=>`<div class="form-field" style="margin-bottom:15px"><span class="field-note">${esc(k)}</span><div style="overflow-wrap:anywhere">${esc(v)}</div></div>`).join('')}
- <hr class="divider"><div class="btn-row">${r.type==='mindful'&&!r.completedAt?`<button class="btn" data-finish-mindful="${esc(r.id)}">Продолжить</button>`:''}<button class="btn outline" data-go="history">К истории</button><button class="btn danger" data-delete-record="${esc(r.id)}">Удалить запись</button></div></div>`;
+ <hr class="divider"><div class="btn-row"> ${r.type==='mindful'&&!r.completedAt?`<button class="btn" data-finish-mindful="${esc(r.id)}">Продолжить</button>`:''}${r.type==='nextbite'&&!r.completedAt?`<button class="btn" data-finish-bite="${esc(r.id)}">Продолжить</button>`:''}<button class="btn outline" data-go="history">К истории</button><button class="btn danger" data-delete-record="${esc(r.id)}">Удалить запись</button></div></div>`;
 }
 function settingsView(){return `${header('Настройки','Напоминания, личные данные и резервные копии.','Для твоего ритма')}
  <div class="card"><h2>Ежедневные паузы</h2><p>Настрой 5 или 6 моментов в течение дня. Внутри открытого приложения появится приглашение заполнить отметку. Для напоминаний при закрытом приложении используй системный Календарь.</p>
@@ -174,15 +211,15 @@ function settingsView(){return `${header('Настройки','Напомина�
  <input type="file" accept="application/json,.json" id="import-file" class="hidden">
  <div class="subtle-divider"></div><button class="btn danger small" id="erase-data">Удалить все записи</button></div>
  <div class="card"><h2>Как добавить на iPhone</h2><ol class="help-list"><li>Опубликуй приложение на HTTPS-сайте (например, GitHub Pages).</li><li>Открой адрес в Safari → «Поделиться» → «На экран Домой».</li><li>Открой приложение с экрана Домой. После первого запуска оно работает и без интернета.</li><li>Для сигналов при закрытом приложении импортируй файл напоминаний в Календарь и разреши ему уведомления.</li></ol><p class="small-copy">При открытии index.html как обычного файла некоторые возможности (например, автономный режим) недоступны.</p></div>`;}
-function render(){const v=el('view');if(!v)return;
+function render(){const v=el('view');if(!v)return;if(biteTimerInterval){clearInterval(biteTimerInterval);biteTimerInterval=null;}
  el('header-date').textContent=new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'short',weekday:'short'}).format(new Date());
  if(page==='home')v.innerHTML=homeView();
  else if(page==='checkin')v.innerHTML=checkinView();
- else if(page==='practice')v.innerHTML=practiceId?practiceId.startsWith('finish:')?finishMindfulView(practiceId.slice(7)):practiceId.startsWith('detail:')?detailsView(practiceId.slice(7)):practiceId==='craving'?cravingView():practiceId==='mindful'?mindfulView():customTaskView(practiceId):editTask?taskEditorView():practiceView();
+ else if(page==='practice')v.innerHTML=practiceId?practiceId.startsWith('finish:')?finishMindfulView(practiceId.slice(7)):practiceId.startsWith('finishbite:')?finishNextBiteView(practiceId.slice(11)):practiceId.startsWith('detail:')?detailsView(practiceId.slice(7)):practiceId==='craving'?cravingView():practiceId==='mindful'?mindfulView():practiceId==='nextbite'?nextBiteView():customTaskView(practiceId):editTask?taskEditorView():practiceView();
  else if(page==='history')v.innerHTML=practiceId?.startsWith('detail:')?detailsView(practiceId.slice(7)):historyView();
  else if(page==='settings')v.innerHTML=settingsView();
  document.querySelectorAll('[data-tab]').forEach(b=>{b.classList.toggle('active',b.dataset.tab===page);b.setAttribute('aria-current',b.dataset.tab===page?'page':'false');});
- attachHandlers();
+ attachHandlers();startBiteTimer();
 }
 function hookRanges(){document.querySelectorAll('input[type="range"]').forEach(input=>{input.addEventListener('input',()=>{const out=el(input.id+'-out');if(out)out.textContent=input.value;});});}
 function hookChoices(){document.querySelectorAll('[data-choice]').forEach(b=>b.addEventListener('click',()=>{const field=b.dataset.choiceField,value=b.dataset.choice,arr=field==='emotions'?selectedEmotions:selectedNeeds;const idx=arr.indexOf(value);if(idx>=0)arr.splice(idx,1);else arr.push(value);b.classList.toggle('selected',idx<0);b.setAttribute('aria-pressed',idx<0?'true':'false');}));}
@@ -191,6 +228,7 @@ function attachHandlers(){hookRanges();hookChoices();
  document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.go)));
  document.querySelectorAll('[data-practice]').forEach(b=>b.addEventListener('click',()=>navigate('practice',b.dataset.practice)));
  document.querySelectorAll('[data-finish-mindful]').forEach(b=>b.addEventListener('click',()=>navigate('practice','finish:'+b.dataset.finishMindful)));
+ document.querySelectorAll('[data-finish-bite]').forEach(b=>b.addEventListener('click',()=>navigate('practice','finishbite:'+b.dataset.finishBite)));
  document.querySelectorAll('[data-detail]').forEach(b=>b.addEventListener('click',()=>navigate('history','detail:'+b.dataset.detail)));
  el('dismiss-reminder')?.addEventListener('click',()=>{dismissedReminder=`${localDateKey()}:${unfilledSlot()}`;el('dismiss-reminder').closest('.reminder').remove();});
  el('add-task')?.addEventListener('click',()=>{editTask=true;render();window.scrollTo(0,0);});
@@ -199,6 +237,10 @@ function attachHandlers(){hookRanges();hookChoices();
  el('craving-form')?.addEventListener('submit',e=>{e.preventDefault();newRecord({type:'craving',impressions:pick('lack-impressions'),time:pick('lack-time'),communication:pick('lack-communication'),urge:pick('craving-urge'),needs:selectedNeeds.slice(),note:val('craving-note').trim()});});
  el('mindful-form')?.addEventListener('submit',e=>{e.preventDefault();newRecord({type:'mindful',needs:selectedNeeds.slice(),feelings:val('feel-before').trim(),expectation:val('expectation').trim(),completedAt:null});});
  el('mindful-finish-form')?.addEventListener('submit',e=>{e.preventDefault();const r=db.records.find(x=>x.id===e.currentTarget.dataset.recordId);if(!r)return;r.pleasureShift=val('pleasure-shift');r.urgeAfter=pick('urge-after');r.afterNote=val('mindful-after-note').trim();r.completedAt=new Date().toISOString();if(save()){notify('Наблюдение дополнено');navigate('home');}});
+ el('nextbite-form')?.addEventListener('submit',e=>{e.preventDefault();const r={id:uid(),at:new Date().toISOString(),type:'nextbite',urgeBefore:pick('bite-urge-before'),nextBiteWish:val('bite-next-wish').trim(),pauseStartedAt:new Date().toISOString(),completedAt:null};db.records.push(r);if(save()){notify('Начало наблюдения сохранено');navigate('practice','finishbite:'+r.id);}});
+ el('stop-bite-pause')?.addEventListener('click',e=>{const r=db.records.find(x=>x.id===e.currentTarget.dataset.recordId&&x.type==='nextbite');if(!r||r.pauseEndedAt)return;r.pauseEndedAt=new Date().toISOString();save();if(biteTimerInterval){clearInterval(biteTimerInterval);biteTimerInterval=null;}el('bite-countdown').textContent='Пауза завершена раньше';e.currentTarget.remove();});
+ el('nextbite-finish-form')?.addEventListener('submit',e=>{e.preventDefault();const r=db.records.find(x=>x.id===e.currentTarget.dataset.recordId&&x.type==='nextbite');if(!r)return;const end=r.pauseEndedAt||new Date().toISOString();r.pauseSeconds=Math.min(60,Math.max(0,Math.round((new Date(end)-new Date(r.pauseStartedAt))/1000)));r.urgeAfter=pick('bite-urge-after');r.afterNote=val('bite-after-note').trim();r.decision=val('bite-decision');r.completedAt=new Date().toISOString();if(save()){notify('Наблюдение сохранено');navigate('home');}});
+ el('abandon-bite-practice')?.addEventListener('click',e=>{const r=db.records.find(x=>x.id===e.currentTarget.dataset.recordId&&x.type==='nextbite');if(!r)return;r.stoppedEarly=true;r.completedAt=new Date().toISOString();r.pauseSeconds=Math.min(60,Math.max(0,Math.round((new Date(r.pauseEndedAt||r.completedAt)-new Date(r.pauseStartedAt))/1000)));if(save()){notify('Упражнение прекращено');navigate('home');}});
  el('task-form')?.addEventListener('submit',e=>{e.preventDefault();const name=val('task-name').trim(),description=val('task-description').trim();const questions=val('task-questions').split('\n').map(x=>x.trim()).filter(Boolean).slice(0,30).map(line=>/^0\s*[-–]\s*10\s*:/i.test(line)?{type:'scale',text:line.replace(/^0\s*[-–]\s*10\s*:/i,'').trim()}:{type:'text',text:line}).filter(q=>q.text);if(!name||!questions.length){notify('Укажи название и хотя бы один вопрос');return;}db.tasks.push({id:uid(),name,description,questions});if(save()){notify('Задание добавлено');navigate('practice');}});
  el('custom-task-form')?.addEventListener('submit',e=>{e.preventDefault();const task=db.tasks.find(t=>t.id===e.currentTarget.dataset.taskId);if(!task)return;const responses=task.questions.map((q,i)=>({label:q.text,type:q.type,value:val(`custom-${i}`).trim()}));newRecord({type:'custom',taskId:task.id,taskName:task.name,responses});});
  document.querySelectorAll('[data-delete-task]').forEach(b=>b.addEventListener('click',()=>{if(confirm('Удалить это задание? Ранее сохранённые ответы останутся в истории.')){db.tasks=db.tasks.filter(t=>t.id!==b.dataset.deleteTask);save();render();}}));
