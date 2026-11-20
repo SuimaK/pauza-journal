@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="Бережный дневник эмоционального состояния и практик психолога. Данные остаются на устройстве.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Пауза">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+  <title>Пауза — дневник состояния</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="brand"><div class="brand-icon" aria-hidden="true">✦</div><div><strong>Пауза</strong><span>дневник состояния</span></div></div>
+      <div id="header-date" class="header-date"></div>
+    </header>
+    <main id="view" aria-live="polite"></main>
+    <nav class="bottom-nav" aria-label="Основное меню">
+      <button type="button" data-tab="home" aria-label="Главная"><span aria-hidden="true">⌂</span><small>Главная</small></button>
+      <button type="button" data-tab="checkin" aria-label="Отметить состояние"><span aria-hidden="true">◉</span><small>Отметить</small></button>
+      <button type="button" data-tab="practice" aria-label="Практики"><span aria-hidden="true">✧</span><small>Практики</small></button>
+      <button type="button" data-tab="history" aria-label="История"><span aria-hidden="true">▤</span><small>История</small></button>
+      <button type="button" data-tab="settings" aria-label="Настройки"><span aria-hidden="true">⚙</span><small>Настройки</small></button>
+    </nav>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>
